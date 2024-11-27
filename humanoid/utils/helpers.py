@@ -119,7 +119,7 @@ def get_load_path(root, load_run=-1, checkpoint=-1):
             print("WARNING - Could not sort runs by month: " + str(e))
             runs.sort()
         if "exported" in runs:
-            runs.remove("exported")
+            runs.remove("exported") # 将exported从runs列表中删除
         last_run = os.path.join(root, runs[-1])
     except:
         raise ValueError("No runs in this directory: " + root)
@@ -127,7 +127,7 @@ def get_load_path(root, load_run=-1, checkpoint=-1):
         load_run = last_run
     else:
         load_run = os.path.join(root, load_run)
-    if checkpoint == -1:
+    if checkpoint == -1: # if checkpoint is -1, get the last checkpoint (biggest number)
         models = [file for file in os.listdir(load_run) if "model" in file]
         models.sort(key=lambda m: "{0:0>15}".format(m))
         model = models[-1]
@@ -169,7 +169,7 @@ def get_args():
         {
             "name": "--task",
             "type": str,
-            "default": "XBotL_free",
+            "default": "humanoid_ppo",
             "help": "Resume training or start testing from a checkpoint. Overrides config file if provided.",
         },
         {
@@ -186,17 +186,20 @@ def get_args():
         {
             "name": "--run_name",
             "type": str,
+            "default": "run_name",
             "help": "Name of the run. Overrides config file if provided.",
         },
         {
             "name": "--load_run",
             "type": str,
+            "default": "/root/humanoid-gym/logs/XBot_ppo/Nov13_14-08-08_run_name",
             "help": "Name of the run to load when resume=True. If -1: will load the last run. Overrides config file if provided.",
         },
         {
             "name": "--checkpoint",
             "type": int,
-            "help": "Saved model checkpoint number. If -1: will load the last checkpoint. Overrides config file if provided.",
+            "default": -1,
+            "help": "Saved model checkpoint number (inside load_run). If -1: will load the last checkpoint. Overrides config file if provided.",
         },
         {
             "name": "--headless",
@@ -245,7 +248,11 @@ def get_args():
     return args
 
 
-def export_policy_as_jit(actor_critic, path):
+def export_policy_as_jit(actor_critic, path): # actor_critic is an nn module
+    """作用: 将actor_critic的actor进行script
+    
+    @param: actor_critic nn.Module，内部有actor和critic两个nn.Sequential，在humanoid/algo/ppo/actor_critic.py内
+    """
     os.makedirs(path, exist_ok=True)
     path = os.path.join(path, "policy_1.pt")
     model = copy.deepcopy(actor_critic.actor).to("cpu")

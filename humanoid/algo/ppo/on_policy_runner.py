@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-FileCopyrightText: Copyright (c) 2021 ETH Zurich, Nikita Rudin
 # SPDX-License-Identifier: BSD-3-Clause
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
 #
@@ -45,10 +45,19 @@ from torch.utils.tensorboard import SummaryWriter
 class OnPolicyRunner:
 
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
+        """
+        作用：内部启动一个PPO（包含ActorCritic），初始化rollout
 
+        @param train_cfg dict
+        @param log_dir string
+        self.cfg
+        {'algorithm_class_name': 'PPO', 'checkpoint': -1, 'experiment_name': 'XBot_ppo', 'load_run': 'log_file_path', 'max_iterations': 3001, 'num_steps_per_env': 60, 'policy_class_name': 'ActorCritic', 'resume': False, 'resume_path': None, 'run_name': 'run_name', 'save_interval': 100}
+        """
         self.cfg = train_cfg["runner"]
         self.alg_cfg = train_cfg["algorithm"]
-        self.policy_cfg = train_cfg["policy"]
+        self.policy_cfg = train_cfg[
+            "policy"
+        ]  # {'actor_hidden_dims': [512, 256, 128], 'critic_hidden_dims': [768, 256, 128], 'init_noise_std': 1.0}
         self.all_cfg = train_cfg
         self.wandb_run_name = (
             datetime.now().strftime("%b%d_%H-%M-%S")
@@ -56,7 +65,7 @@ class OnPolicyRunner:
             + train_cfg["runner"]["experiment_name"]
             + "_"
             + train_cfg["runner"]["run_name"]
-        )
+        )  # 'Nov26_16-04-13_XBot_ppo_run_name'
         self.device = device
         self.env = env
         if self.env.num_privileged_obs is not None:
@@ -79,10 +88,12 @@ class OnPolicyRunner:
             [self.env.num_obs],
             [self.env.num_privileged_obs],
             [self.env.num_actions],
-        )
+        ) # num_envs 1, num_steps_per_env 60,
+          # self.env.num_obs 705, self.env.num_privileged_obs 219
+          # self.env.num_actions 12
 
         # Log
-        self.log_dir = log_dir
+        self.log_dir = log_dir  # '/root/humanoid-gym/logs/XBot_ppo/Nov14_15-18-49_run_name' # run_name is defined from the arguments
         self.writer = None
         self.tot_timesteps = 0
         self.tot_time = 0
@@ -91,7 +102,7 @@ class OnPolicyRunner:
         _, _ = self.env.reset()
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
-        # initialize writer
+        # initialize writer when there is a self.log_dir but self.writer is none
         if self.log_dir is not None and self.writer is None:
             wandb.init(
                 project="XBot",
@@ -99,13 +110,17 @@ class OnPolicyRunner:
                 name=self.wandb_run_name,
                 config=self.all_cfg,
             )
-            self.writer = SummaryWriter(log_dir=self.log_dir, flush_secs=10)
+            self.writer = SummaryWriter(
+                log_dir=self.log_dir, flush_secs=10
+            )  # defined in tensorboard
         if init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(
                 self.env.episode_length_buf, high=int(self.env.max_episode_length)
             )
-        obs = self.env.get_observations()
-        privileged_obs = self.env.get_privileged_observations()
+        obs = (
+            self.env.get_observations()
+        )  # from envs/base/base_task.py # shape [4096, 705], dtype=torch.float32
+        privileged_obs = self.env.get_privileged_observations()  # [4096, 219]
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
         self.alg.actor_critic.train()  # switch to train mode (for dropout for example)
@@ -115,7 +130,7 @@ class OnPolicyRunner:
         lenbuffer = deque(maxlen=100)
         cur_reward_sum = torch.zeros(
             self.env.num_envs, dtype=torch.float, device=self.device
-        )
+        )  # shape: [4096]
         cur_episode_length = torch.zeros(
             self.env.num_envs, dtype=torch.float, device=self.device
         )
@@ -125,7 +140,7 @@ class OnPolicyRunner:
             start = time.time()
             # Rollout
             with torch.inference_mode():
-                for i in range(self.num_steps_per_env):
+                for i in range(self.num_steps_per_env):  # each env, do 60 steps
                     actions = self.alg.act(obs, critic_obs)
                     obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
                     critic_obs = privileged_obs if privileged_obs is not None else obs
@@ -165,7 +180,7 @@ class OnPolicyRunner:
             learn_time = stop - start
             if self.log_dir is not None:
                 self.log(locals())
-            if it % self.save_interval == 0:
+            if it % self.save_interval == 0:  # if it % 100 == 0, save the pt model
                 self.save(os.path.join(self.log_dir, "model_{}.pt".format(it)))
             ep_infos.clear()
 
@@ -287,15 +302,18 @@ class OnPolicyRunner:
         )
 
     def load(self, path, load_optimizer=True):
-        loaded_dict = torch.load(path)
-        self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"])
+        # loaded_dict = torch.load(path)
+        ### cgz revise
+        loaded_dict = torch.load(path, map_location="cuda:0")
+        ### end revise
+        self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"]) # load the model into self.alg.actor_critic
         if load_optimizer:
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device=None):
-        self.alg.actor_critic.eval()  # switch to evaluation mode (dropout for example)
+        self.alg.actor_critic.eval()  # switch to evaluation mode (dropout for example) # actor_critic is an nn.Module
         if device is not None:
             self.alg.actor_critic.to(device)
         return self.alg.actor_critic.act_inference

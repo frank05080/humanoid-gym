@@ -75,12 +75,12 @@ def play(args):
     # load policy
     train_cfg.runner.resume = True
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
-    policy = ppo_runner.get_inference_policy(device=env.device)
+    policy = ppo_runner.get_inference_policy(device=env.device) # this is the actor, can be passed into an obs
     
     # export policy as a jit module (used to run it from C++)
     if EXPORT_POLICY:
         path = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'policies')
-        export_policy_as_jit(ppo_runner.alg.actor_critic, path)
+        export_policy_as_jit(ppo_runner.alg.actor_critic, path) # 此时的ppo_runner.alg.actor_critic已经加载了权重
         print('Exported policy as jit script to: ', path)
 
     logger = Logger(env.dt)
@@ -114,7 +114,17 @@ def play(args):
 
     for i in tqdm(range(stop_state_log)):
 
-        actions = policy(obs.detach()) # * 0.
+        #### Save inputs #### 
+        if SAVE_INPUTS:
+            obs_np = obs.cpu().numpy()
+            input_bin_path = os.path.join(
+                "/root/humanoid-gym/test/dump_inputs",
+                f"{str(i)}.bin",
+            )
+            obs_np.tofile(input_bin_path)
+        #######################
+
+        actions = policy(obs.detach()) # * 0. # obs: [1,705] fp32
         
         if FIX_COMMAND:
             env.commands[:, 0] = 0.5    # 1.0
@@ -162,7 +172,8 @@ def play(args):
         video.release()
 
 if __name__ == '__main__':
-    EXPORT_POLICY = True
+    SAVE_INPUTS = False
+    EXPORT_POLICY = False # revise
     RENDER = True
     FIX_COMMAND = True
     args = get_args()
